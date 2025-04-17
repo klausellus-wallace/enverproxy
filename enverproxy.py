@@ -203,9 +203,46 @@ class TheServer:
         for wrdict in wrdata:
             id = wrdict.pop('wrid')
             wrdict.pop('remaining', None)
-            self.__log.logMsg('Submitting data for converter: ' + str(id) + ' to MQTT', 3)
-            self.mqtt.publish('enverbridge/' + id, json.dumps(wrdict))
-        self.__log.logMsg('Finished sending to MQTT', 2)
+
+            base_topic = f"enverbridge/{id}"
+            self.__log.logMsg(f"Submitting data for converter: {id} to MQTT", 3)
+
+            # Publish actual state data
+            self.mqtt.publish(base_topic, json.dumps(wrdict))
+
+            # Home Assistant Discovery topics
+            for key, details in {
+                "power": {"name": "Power", "unit": "W", "device_class": "power"},
+                "dc": {"name": "Voltage DC", "unit": "V", "device_class": "voltage"},
+                "ac": {"name": "Voltage AC","unit": "V", "device_class": "voltage"},
+                "totalkwh": {"name": "Total Energy", "unit": "kWh", "device_class": "energy", "state_class": "total_increasing"},
+                "temp": {"name": "Temperature", "unit": "°C", "device_class": "temperature"},
+                "freq": {"name": "Frequency", "unit": "Hz", "device_class": "frequency"},
+            }.items():
+                discovery_topic = f"homeassistant/sensor/enverbridge_{id}_{key}/config"
+                payload = {
+                    "name": details["name"],
+                    "state_topic": base_topic,
+                    "value_template": f"{{{{ value_json.{key} }}}}",
+                    "unit_of_measurement": details["unit"],
+                    "device_class": details["device_class"],
+                    "unique_id": f"enverbridge_{id}_{key}",
+                    "device": {
+                        "identifiers": [f"enverbridge_{id}"],
+                        "name": f"EnverBridge {id}",
+                        "manufacturer": "Envertech",
+                        "model": "EVB202"
+                    }
+                }
+                # Add 'state_class' only if it exists in the details dictionary
+                if 'state_class' in details:
+                    payload["state_class"] = details["state_class"]
+                
+                self.mqtt.publish(discovery_topic, json.dumps(payload), retain=True)
+
+        self.__log.logMsg("Finished sending to MQTT", 2)
+
+
 
     def process_data(self, data):
         datainhex = data.hex()
